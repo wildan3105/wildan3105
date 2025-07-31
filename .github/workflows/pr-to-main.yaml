@@ -1,59 +1,70 @@
+name: Create PR for release branch
+
+on:
+  push:
+    tags:
+      - 'prod-*'          # e.g. prod-v3.1.1
+
+permissions:
+  contents: read          # required by github-script
+  pull-requests: write    # allow PR creation with GITHUB_TOKEN
+
 jobs:
   create-pr:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Derive version from the tag name -------------------------------
       - name: Extract version number
         id: vars
         run: |
-          tag="${GITHUB_REF#refs/tags/}"
-          version="${tag#prod-}"
+          tag="${GITHUB_REF#refs/tags/}"   # prod-v3.1.1
+          version="${tag#prod-}"           # v3.1.1
           echo "version=$version" >>"$GITHUB_OUTPUT"
 
-      - name: Create pull request with GitHub API and request reviewers
+      # 2. Create (or find) the PR ----------------------------------------
+      - name: Create pull request with GitHub API
         uses: actions/github-script@v7
         with:
           script: |
             const version = core.getInput('version', {required: true});
-            const head    = `release/${version}`;
-            const base    = context.payload.repository.default_branch;
+            const head    = `release/${version}`;                    // source branch
+            const base    = context.payload.repository.default_branch; // target branch
             const title   = `Release ${version}`;
             const body    = `Automated PR: merge **${head}** into **${base}**`;
 
-            // Check if source branch exists
+            // Check if branch exists; skip if it does not.
             try {
               await github.rest.repos.getBranch({
                 owner: context.repo.owner,
-                repo: context.repo.repo,
-                branch: head,
+                repo:  context.repo.repo,
+                branch: head
               });
             } catch {
-              core.setFailed(`Branch ${head} does not exist.`);
+              core.setFailed(`Branch ${head} does not exist – aborting.`);
               return;
             }
 
             // Avoid duplicate PRs
-            const { data: existingPRs } = await github.rest.pulls.list({
+            const {data: prs} = await github.rest.pulls.list({
               owner: context.repo.owner,
-              repo: context.repo.repo,
-              head: `${context.repo.owner}:${head}`,
-              base,
-              state: 'open'
+              repo:  context.repo.repo,
+              head:  `${context.repo.owner}:${head}`,
+              base
             });
-
-            if (existingPRs.length > 0) {
-              core.info(`PR already exists: ${existingPRs[0].html_url}`);
+            if (prs.length) {
+              core.info(`PR already exists: ${prs[0].html_url}`);
               return;
             }
 
-            // Create PR
-            const { data: pr } = await github.rest.pulls.create({
+            // Create the PR
+            const {data: pr} = await github.rest.pulls.create({
               owner: context.repo.owner,
-              repo: context.repo.repo,
-              title,
-              body,
+              repo:  context.repo.repo,
               head,
-              base
+              base,
+              title,
+              body
             });
 
             core.info(`Created PR ${pr.html_url}`);
