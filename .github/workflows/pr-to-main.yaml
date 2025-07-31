@@ -1,0 +1,73 @@
+jobs:
+  create-pr:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Extract version number
+        id: vars
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          version="${tag#prod-}"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+
+      - name: Create pull request with GitHub API and request reviewers
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const version = core.getInput('version', {required: true});
+            const head    = `release/${version}`;
+            const base    = context.payload.repository.default_branch;
+            const title   = `Release ${version}`;
+            const body    = `Automated PR: merge **${head}** into **${base}**`;
+
+            // Check if source branch exists
+            try {
+              await github.rest.repos.getBranch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                branch: head,
+              });
+            } catch {
+              core.setFailed(`Branch ${head} does not exist.`);
+              return;
+            }
+
+            // Avoid duplicate PRs
+            const { data: existingPRs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head: `${context.repo.owner}:${head}`,
+              base,
+              state: 'open'
+            });
+
+            if (existingPRs.length > 0) {
+              core.info(`PR already exists: ${existingPRs[0].html_url}`);
+              return;
+            }
+
+            // Create PR
+            const { data: pr } = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+              head,
+              base
+            });
+
+            core.info(`Created PR ${pr.html_url}`);
+
+            // Request reviewers (GitHub usernames, not emails)
+            const reviewers = ['wildan3105']; // 👈 Customize this list
+            if (reviewers.length > 0) {
+              await github.rest.pulls.requestReviewers({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+                reviewers: reviewers
+              });
+              core.info(`Requested review from: ${reviewers.join(', ')}`);
+            }
+        env:
+          version: ${{ steps.vars.outputs.version }}
